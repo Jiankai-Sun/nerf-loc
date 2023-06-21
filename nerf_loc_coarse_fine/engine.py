@@ -84,12 +84,9 @@ def train_one_epoch(
             batch_data_label[key] = batch_data_label[key].to(net_device)
             if dataset_config.pseudo_batch_size > 1:
                 if key in ["gt_box_corners"]:
-                    # print(key, batch_data_label[key].shape)  # gt_box_corners torch.Size([1, 8, 1, 8, 3])
                     sh = batch_data_label[key].shape
                     batch_data_label[key] = batch_data_label[key].reshape(-1, sh[2], sh[3], sh[4])
                 if key in ['gt_box_sem_cls_label', 'gt_box_present', 'gt_box_angles']:
-                    # print(key, batch_data_label[key].shape)  # gt_box_corners torch.Size([1, 1])
-                    # sh = batch_data_label[key].shape
                     batch_data_label[key] = batch_data_label[key].reshape(-1, 1)
 
         # Forward pass
@@ -105,23 +102,14 @@ def train_one_epoch(
             'gt_box_angles': batch_data_label['gt_box_angles'],
             'scan_path': batch_data_label['scan_path'],
         }
-        # print('inputs[point_clouds].shape, inputs[point_cloud_dims_min].shape, inputs[point_cloud_dims_max].shape: ',
-        #       inputs['point_clouds'].shape, inputs['point_cloud_dims_min'].shape, inputs['point_cloud_dims_max'].shape)
-        # outputs = model(inputs)
         outputs, return_gt = model(inputs, net_device=net_device)
         batch_data_label.update(return_gt)
-        # print('outputs: ', outputs, 'batch_data_label: ', batch_data_label)
-        # print('outputs: ', outputs,)
-        # raise NotImplementedError
         # Compute loss
         loss, loss_dict = criterion(outputs, batch_data_label)
         if isinstance(outputs, list):
             outputs = outputs[0]
 
         if args.save_pred and False:
-            # dict_keys(['outputs', 'aux_outputs']) dict_keys(['point_clouds', 'gt_box_corners', 'gt_box_centers', 'gt_box_centers_normalized', 'gt_box_sem_cls_label', 'gt_box_present', 'scan_idx', 'gt_box_sizes', 'gt_box_sizes_normalized', 'gt_box_angles', 'gt_angle_class_label', 'gt_angle_residual_label', 'point_cloud_dims_min', 'point_cloud_dims_max', 'scan_path', 'intrinsic_matrix', 'cam_to_world', 'nactual_gt', 'num_boxes', 'num_boxes_replica'])
-            # print(outputs.keys(), batch_data_label.keys())
-            # print(outputs['outputs'].keys())  # dict_keys(['sem_cls_logits', 'center_normalized', 'center_unnormalized', 'size_normalized', 'size_unnormalized', 'angle_logits', 'angle_residual', 'angle_residual_normalized', 'angle_continuous', 'objectness_prob', 'sem_cls_prob', 'box_corners', 'gious', 'center_dist'])
             save_outputs = {
                 'sem_cls_logits': outputs['outputs']['sem_cls_logits'].cpu(),
                 'box_corners': outputs['outputs']['box_corners'].cpu(),
@@ -134,8 +122,6 @@ def train_one_epoch(
                 'nerf_ckpt_path': batch_data_label['nerf_ckpt_path'],
                 'intrinsic_matrix': batch_data_label['intrinsic_matrix'],
                 'cam_to_world': batch_data_label['cam_to_world'],
-                # 'nerf_rgbs': batch_data_label['nerf_rgbs'],
-                # 'corner_bboxes_path': batch_data_label['corner_bboxes_path'],
             }
             if args.test_only: # or True:
                 save_batch_data_label['nerf_rgbs'] = batch_data_label['nerf_rgbs']
@@ -153,8 +139,6 @@ def train_one_epoch(
                 'outputs': save_outputs,
                 'label': save_batch_data_label,
             }
-            # save_dir = os.path.join(args.log_dir, 'train_{:03d}_{:03d}'.format(curr_epoch, batch_idx))
-            # os.makedirs(save_dir, exist_ok=True)
             with open(os.path.join(args.log_dir, 'train_{:03d}_{:04d}.pkl'.format(curr_epoch, batch_idx)), 'wb') as f:
                 pickle.dump(save_dict, f)
         loss_reduced = all_reduce_average(loss)
@@ -225,7 +209,7 @@ def evaluate(
     # ap calculator is exact for evaluation. This is slower than the ap calculator used during training.
     ap_calculator = APCalculator(
         dataset_config=dataset_config,
-        ap_iou_thresh=[0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], # [0.25, 0.5],
+        ap_iou_thresh=[0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
         class2type_map=dataset_config.class2type,
         exact_eval=False,
     )
@@ -248,12 +232,9 @@ def evaluate(
             batch_data_label[key] = batch_data_label[key].to(net_device)
             if dataset_config.pseudo_batch_size > 1:
                 if key in ["gt_box_corners"]:
-                    # print(key, batch_data_label[key].shape)  # gt_box_corners torch.Size([1, 8, 1, 8, 3])
                     sh = batch_data_label[key].shape
                     batch_data_label[key] = batch_data_label[key].reshape(-1, sh[2], sh[3], sh[4])
                 if key in ['gt_box_sem_cls_label', 'gt_box_present', 'gt_box_angles']:
-                    # print(key, batch_data_label[key].shape)  # gt_box_corners torch.Size([1, 1])
-                    # sh = batch_data_label[key].shape
                     batch_data_label[key] = batch_data_label[key].reshape(-1, 1)
 
         inputs = {
@@ -293,10 +274,8 @@ def evaluate(
                 'scan_path': batch_data_label['scan_path'],
                 'intrinsic_matrix': batch_data_label['intrinsic_matrix'],
                 'cam_to_world': batch_data_label['cam_to_world'],
-                # 'nerf_rgbs': batch_data_label['nerf_rgbs'],
-                # 'corner_bboxes_path': batch_data_label['corner_bboxes_path'],
             }
-            if args.test_only: # or True:
+            if args.test_only:
                 save_batch_data_label['nerf_rgbs'] = batch_data_label['nerf_rgbs']
                 if 'nerf_depth' in batch_data_label:
                     save_batch_data_label['nerf_depth'] = batch_data_label['nerf_depth']
@@ -312,14 +291,11 @@ def evaluate(
                 'outputs': save_outputs,
                 'label': save_batch_data_label,
             }
-            # save_dir = os.path.join(args.log_dir, 'eval_{:03d}_{:03d}'.format(curr_epoch, batch_idx))
-            # os.makedirs(save_dir, exist_ok=True)
             with open(os.path.join(args.log_dir, 'eval_{:03d}_{:04d}.pkl'.format(curr_epoch, batch_idx)), 'wb') as f:
                 pickle.dump(save_dict, f)
         # Memory intensive as it gathers point cloud GT tensor across all ranks
         outputs["outputs"] = all_gather_dict(outputs["outputs"])
         batch_data_label = all_gather_dict(batch_data_label)
-        # print('outputs.shape: ', outputs.shape)
         ap_calculator.step_meter(outputs, batch_data_label)
         time_delta.update(time.time() - curr_time)
         if is_primary() and curr_iter % args.log_every == 0:

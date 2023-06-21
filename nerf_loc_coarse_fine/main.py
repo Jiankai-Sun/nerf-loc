@@ -311,41 +311,6 @@ def do_train(
                          **{f'test_{k}': v for k, v in test_metrics_dict.items()}, 'epoch': epoch,}
             wandb.log(log_stats, step=epoch + 1)
 
-    if False: # True:
-        # always evaluate last checkpoint
-        epoch = args.max_epoch - 1
-        curr_iter = epoch * len(dataloaders["train"])
-        ap_calculator = evaluate(
-            args,
-            epoch,
-            model,
-            criterion,
-            dataset_config,
-            dataloaders["test"],
-            logger,
-            curr_iter,
-        )
-        metrics = ap_calculator.compute_metrics()
-        metric_str = ap_calculator.metrics_to_str(metrics)
-        if is_primary():
-            print("==" * 10)
-            print(f"Evaluate Final [{epoch}/{args.max_epoch}]; Metrics {metric_str}")
-            print("==" * 10)
-
-            with open(final_eval, "w") as fh:
-                fh.write("Training Finished.\n")
-                fh.write("==" * 10)
-                fh.write("Final Eval Numbers.\n")
-                fh.write(metric_str)
-                fh.write("\n")
-                fh.write("==" * 10)
-                fh.write("Best Eval Numbers.\n")
-                fh.write(ap_calculator.metrics_to_str(best_val_metrics))
-                fh.write("\n")
-
-            with open(final_eval_pkl, "wb") as fh:
-                pickle.dump(metrics, fh)
-
 
 def test_model(args, model, model_no_ddp, criterion, dataset_config, dataloaders):
     if args.test_ckpt is None or not os.path.isfile(args.test_ckpt):

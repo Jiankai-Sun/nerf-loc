@@ -103,10 +103,6 @@ class PositionEmbeddingCoordsSine(nn.Module):
         orig_xyz = xyz
         xyz = orig_xyz.clone()
 
-        # ncoords = xyz.shape[1]
-        # if self.normalize:
-        #     xyz = shift_scale_points(xyz, src_range=input_range)
-
         xyz *= 2 * np.pi
         xyz_proj = torch.mm(xyz.view(-1, d_in), self.gauss_B[:, :d_out]).view(
             bsize, npoints, d_out

@@ -102,5 +102,6 @@ CUDA_VISIBLE_DEVICES=0 python main.py --dataset_name nerf --arch_type fine --tes
 cd ../Objectron/notebooks
 python vis_pred.py
 ```
+
 ## Acknowledgement
-[[nerf-pytorch]](https://github.com/yenchenlin/nerf-pytorch) and [[3detr]](https://github.com/facebookresearch/3detr)
+Our code is based on [3detr](https://github.com/facebookresearch/3detr) and [nerf-pytorch](https://github.com/yenchenlin/nerf-pytorch).

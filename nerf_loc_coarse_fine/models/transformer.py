@@ -105,7 +105,6 @@ class TransformerDecoder(nn.Module):
                 transpose_swap: Optional [bool] = False,
                 return_attn_weights: Optional [bool] = False,
                 ):
-        # print('TransformerDecoder memory.shape: ', memory.shape)
         if transpose_swap:
             bs, c, h, w = memory.shape
             memory = memory.flatten(2).permute(2, 0, 1) # memory: bs, c, t -> t, b, c
@@ -115,7 +114,6 @@ class TransformerDecoder(nn.Module):
 
         intermediate = []
         attns = []
-        # print('output.shape, memory.shape: ', output.shape, memory.shape)  # torch.Size([128, 8, 256]) torch.Size([128, 8, 256])
 
         for layer in self.layers:
             output, attn = layer(output, memory, tgt_mask=tgt_mask,
@@ -130,7 +128,6 @@ class TransformerDecoder(nn.Module):
                 attns.append(attn)
 
         if self.norm is not None:
-            # print('norm: ', self.norm)  # norm:  LayerNorm((256,), eps=1e-05, elementwise_affine=True)
             output = self.norm(output)
             if self.return_intermediate:
                 try:
@@ -143,7 +140,6 @@ class TransformerDecoder(nn.Module):
             attns = torch.stack(attns)
 
         if self.return_intermediate:
-            # print('len(intermediate): ', len(intermediate))  # 1
             return torch.stack(intermediate), attns
 
         return output[None], attns
@@ -249,17 +245,6 @@ class TransformerEncoderLayer(nn.Module):
             self.activation = ACTIVATION_DICT[activation]()
             self.nhead = nhead
         else:
-            # self.encoder_mlp = GenericMLP(
-            #     input_dim=d_model,
-            #     hidden_dims=[d_model],
-            #     output_dim=d_model,
-            #     norm_fn_name=None,
-            #     activation="relu",
-            #     use_conv=False,
-            #     output_use_activation=True,
-            #     output_use_norm=False,
-            #     output_use_bias=False,
-            # )
             self.encoder_mlp = nn.Linear(d_model, d_model)
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
@@ -353,24 +338,10 @@ class TransformerDecoderLayer(nn.Module):
             self.linear2 = nn.Linear(dim_feedforward, d_model)
 
             self.activation = ACTIVATION_DICT[activation]()
-            # self.corner_head = nn.Linear(decoder_dim, 8 * 3)
         else:
-            # self.decoder_mlp = GenericMLP(
-            #         input_dim=d_model * 3,
-            #         hidden_dims=[d_model],
-            #         output_dim=d_model,
-            #         norm_fn_name=None,
-            #         activation="relu",
-            #         use_conv=False,
-            #         output_use_activation=True,
-            #         output_use_norm=False,
-            #         output_use_bias=False,
-            #     )
             self.decoder_mlp = nn.Linear(d_model * 3, d_model)
-            # self.decoder_mlp = nn.Linear(d_model * 2, d_model)
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        # print('tensor.shape: {}, pos.shape: {}'.format(tensor.shape, pos.shape))
         return tensor # if pos is None else tensor + pos
 
     def forward_post(self, tgt, memory,
@@ -407,11 +378,8 @@ class TransformerDecoderLayer(nn.Module):
                     pos: Optional[Tensor] = None,
                     query_pos: Optional[Tensor] = None,
                     return_attn_weights: Optional [bool] = False):
-        # print('tgt.shape, memory.shape, query_pos.shape: ', tgt.shape, memory.shape, query_pos.shape)
-        # torch.Size([128, 8, 256]) torch.Size([128, 8, 256]) torch.Size([128, 8, 256])
         if self.use_mlp:
             tgt = self.decoder_mlp(torch.cat([tgt, memory, query_pos], dim=-1))
-            # tgt = self.decoder_mlp(torch.cat([tgt, memory], dim=-1))
             attn = None
         else:
             if self.attn_type == 'orig_attn':
@@ -431,37 +399,15 @@ class TransformerDecoderLayer(nn.Module):
                 tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
                 tgt = tgt + self.dropout3(tgt2)
             elif self.attn_type == 'self_attn':
-                #
                 tgt = memory
                 tgt2 = self.norm1(tgt)
                 q = k = self.with_pos_embed(tgt2, None)
                 tgt2, attn = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask,
                                       key_padding_mask=tgt_key_padding_mask)
                 tgt = tgt + self.dropout1(tgt2)
-                # tgt2 = self.norm2(memory)
-                # tgt2, attn = self.multihead_attn(query=self.with_pos_embed(tgt2, None),
-                #                                  key=self.with_pos_embed(memory, None),
-                #                                  value=memory, attn_mask=memory_mask,
-                #                                  key_padding_mask=memory_key_padding_mask)
-                # tgt = tgt + self.dropout2(tgt2)
                 tgt2 = self.norm3(tgt)
                 tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
                 tgt = tgt + self.dropout3(tgt2)
-
-                '''
-                # encoder attn: self_attn
-                src2 = self.norm1(memory)
-                value = src2
-                q = k = self.with_pos_embed(src2, pos)
-                src2, attn = self.self_attn(q, k, value=value, attn_mask=None,
-                                                    key_padding_mask=None)
-                src = memory + self.dropout1(src2)
-                if self.use_ffn:
-                    src2 = self.norm2(src)
-                    src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
-                    src = src + self.dropout2(src2)
-                tgt = src
-                '''
 
         if return_attn_weights:
             return tgt, attn

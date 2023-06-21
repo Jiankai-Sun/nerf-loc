@@ -32,11 +32,7 @@ class BoxProcessor(object):
         self.dataset_config = dataset_config
 
     def compute_predicted_center(self, center_offset, query_xyz, point_cloud_dims):
-        # print('query_xyz.shape: ', query_xyz.shape)  # torch.Size([8, 128, 4])
         center_unnormalized = query_xyz[:, :, :3] + center_offset
-        # center_normalized = shift_scale_points(
-        #     center_unnormalized, src_range=point_cloud_dims
-        # )
         center_normalized = center_unnormalized
         return center_normalized, center_unnormalized
 
@@ -44,7 +40,6 @@ class BoxProcessor(object):
         scene_scale = point_cloud_dims[1] - point_cloud_dims[0]
         scene_scale = torch.clamp(scene_scale, min=1e-1)
         size_unnormalized = size_normalized
-        # size_unnormalized = scale_points(size_normalized, mult_factor=scene_scale)
         return size_unnormalized
 
     def compute_predicted_angle(self, angle_logits, angle_residual):
@@ -137,8 +132,6 @@ class Model3DETR(nn.Module):
                 num_ftrs = self.resnet.fc.in_features
                 self.resnet.fc = nn.Linear(num_ftrs, decoder_dim)
                 if dataset_config.input_type == 'nerf':
-                    # print(self.resnet)
-                    # num_ftrs = self.resnet.conv1.in_features
                     self.resnet.conv1 = nn.Conv2d(128 * 2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
                 self.corner_head = nn.Linear(decoder_dim, 8 * 3)
                 self.semcls_head = nn.Linear(decoder_dim, dataset_config.num_semcls + 1)
@@ -303,7 +296,6 @@ class Model3DETR(nn.Module):
         # Semantic class of the box
         # add 1 for background/not-an-object class
         semcls_head = mlp_func(output_dim=dataset_config.num_semcls + 1)
-        # semcls_head = nn.Conv1d(decoder_dim, dataset_config.num_semcls + 1, 1, )
 
         # geometry of the box
         if dataset_config.version == 'v1_csa':
@@ -330,18 +322,7 @@ class Model3DETR(nn.Module):
         self.mlp_heads = nn.ModuleDict(mlp_heads)
 
     def get_query_embeddings(self, encoder_xyz, point_cloud_dims):
-        # query_inds = furthest_point_sample(encoder_xyz, self.num_queries)
-        # query_inds = query_inds.long()
-        # query_xyz = [torch.gather(encoder_xyz[..., x], 1, query_inds) for x in range(3)]
         query_xyz = encoder_xyz  # [:, self.num_queries]
-        # query_xyz = torch.stack(query_xyz)
-        # print('query_xyz.shape: ', query_xyz.shape)  # [8, 240, 180, 128, 4]
-        # query_xyz = query_xyz.permute(1, 2, 0)
-
-        # Gater op above can be replaced by the three lines below from the pointnet2 codebase
-        # xyz_flipped = encoder_xyz.transpose(1, 2).contiguous()
-        # query_xyz = gather_operation(xyz_flipped, query_inds.int())
-        # query_xyz = query_xyz.transpose(1, 2)
         pos_embed = self.pos_embedding(query_xyz, input_range=point_cloud_dims)
         query_embed = self.query_projection(pos_embed)
         return query_xyz, query_embed
@@ -364,24 +345,10 @@ class Model3DETR(nn.Module):
         xyz = point_clouds
         features = point_clouds
         pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pre_encoder(xyz, features)
-        # xyz: batch x npoints x 3
-        # features: batch x channel x npoints
-        # inds: batch x npoints
 
-        # nn.MultiHeadAttention in encoder expects npoints x batch x channel features
-        # pre_enc_features = point_clouds.permute(2, 0, 1)
-
-        # xyz points are in batch x npointx channel order
         enc_xyz, enc_features, enc_inds = self.encoder(
             pre_enc_features, xyz=pre_enc_xyz
         )
-        # if enc_inds is None:
-        #     # encoder does not perform any downsampling
-        #     enc_inds = pre_enc_inds
-        # else:
-        #     # use gather here to ensure that it works for both FPS and random sampling
-        #     enc_inds = torch.gather(pre_enc_inds, 1, enc_inds)
-        # enc_xyz = point_clouds
         enc_inds = None
         enc_features = enc_features.permute(1, 0, 2)
         return enc_xyz, enc_features, enc_inds
@@ -389,16 +356,8 @@ class Model3DETR(nn.Module):
     def run_coarse_encoder(self, point_clouds):
         xyz = point_clouds
         features = point_clouds
-        # print('xyz: {}, features: {}'.format(xyz.shape, features.shape))  # xyz: torch.Size([8, 240, 180, 64, 4]), features: torch.Size([8, 240, 180, 64, 4])
         pre_enc_xyz, pre_enc_features, pre_enc_inds = self.coarse_pre_encoder(xyz, features)
-        # xyz: batch x npoints x 3
-        # features: batch x channel x npoints
-        # inds: batch x npoints
 
-        # nn.MultiHeadAttention in encoder expects npoints x batch x channel features
-        # pre_enc_features = point_clouds.permute(2, 0, 1)
-
-        # xyz points are in batch x npointx channel order
         enc_xyz, enc_features, enc_inds = self.coarse_encoder(
             pre_enc_features, xyz=pre_enc_xyz
         )
@@ -415,8 +374,6 @@ class Model3DETR(nn.Module):
                               max: batch x 3 tensor of max XYZ coords
             box_features: num_layers x num_queries x batch x channel
         """
-        # box_features change to (num_layers x batch) x channel x num_queries
-        # print('box_features.shape: ', box_features.shape)  # box_features.shape:  torch.Size([1, 128, 8, 256])
         box_features = box_features.permute(0, 2, 3, 1)
         num_layers, batch, channel, num_queries = (
             box_features.shape[0],
@@ -430,7 +387,6 @@ class Model3DETR(nn.Module):
         cls_logits = self.mlp_heads["sem_cls_head"](box_features).transpose(1, 2)
         # reshape outputs to num_layers x batch x nqueries x noutput
         cls_logits = cls_logits.reshape(num_layers, batch, num_queries, -1)[:, :, 0:1, :]
-        # print('cls_logits.shape: ', cls_logits.shape)  # cls_logits.shape:  torch.Size([1, 8, 64, 2])
         if self.version == 'v1_csa':
             center_offset = (
                 self.mlp_heads["center_head"](box_features).sigmoid().transpose(1, 2) - 0.5
@@ -454,7 +410,6 @@ class Model3DETR(nn.Module):
         elif self.version == 'v2_corner':
             box_corners = self.mlp_heads["corner_head"](box_features).transpose(1, 2)
             box_corners = box_corners.reshape(num_layers, batch, num_queries, 8, 3)[:, :, 0:1, :, :]
-        # print('box_corners.shape: ', box_corners.shape)
         outputs = []
         for l in range(num_layers):
             # box processor converts outputs so we can get a 3D bounding box
@@ -474,7 +429,6 @@ class Model3DETR(nn.Module):
                 box_corners = self.box_processor.box_parametrization_to_corners(
                     center_unnormalized, size_unnormalized, angle_continuous
                 )
-                # print(box_corners.shape) # torch.Size([8, 128, 8, 3])
             # below are not used in computing loss (only for matching/mAP eval)
             # we compute them with no_grad() so that distributed training does not complain about unused variables
             with torch.no_grad():
@@ -482,7 +436,6 @@ class Model3DETR(nn.Module):
                     semcls_prob,
                     objectness_prob,
                 ) = self.box_processor.compute_objectness_and_cls_prob(cls_logits[l])
-            # print(box_corners[l].shape)
             if self.version == 'v1_csa':
                 box_prediction = {
                     "sem_cls_logits": cls_logits[l],
@@ -505,7 +458,6 @@ class Model3DETR(nn.Module):
                     "sem_cls_prob": semcls_prob,
                     "box_corners": box_corners[l],
                 }
-                # print('cls_logits[l].shape, box_corners[l].shape: ', cls_logits[l].shape, box_corners[l].shape)
             outputs.append(box_prediction)
 
         # intermediate decoder layer outputs are only used during training
@@ -514,7 +466,6 @@ class Model3DETR(nn.Module):
 
         return {
             "outputs": outputs,  # output from last layer of decoder
-            # "aux_outputs": aux_outputs,  # output from intermediate layers of decoder
         }
 
     def coarse_get_box_predictions(self, query_xyz, point_cloud_dims, box_features):
@@ -584,7 +535,6 @@ class Model3DETR(nn.Module):
                 box_corners = self.box_processor.box_parametrization_to_corners(
                     center_unnormalized, size_unnormalized, angle_continuous
                 )
-                # print(box_corners.shape) # torch.Size([8, 128, 8, 3])
             # below are not used in computing loss (only for matching/mAP eval)
             # we compute them with no_grad() so that distributed training does not complain about unused variables
             with torch.no_grad():
@@ -592,7 +542,6 @@ class Model3DETR(nn.Module):
                     semcls_prob,
                     objectness_prob,
                 ) = self.box_processor.compute_objectness_and_cls_prob(cls_logits[l])
-            # print(box_corners[l].shape)
             if self.version == 'v1_csa':
                 box_prediction = {
                     "sem_cls_logits": cls_logits[l],
@@ -615,7 +564,6 @@ class Model3DETR(nn.Module):
                     "sem_cls_prob": semcls_prob,
                     "box_corners": box_corners[l],
                 }
-                # print('cls_logits[l].shape, box_corners[l].shape: ', cls_logits[l].shape, box_corners[l].shape)
             outputs.append(box_prediction)
 
         # intermediate decoder layer outputs are only used during training
@@ -631,8 +579,6 @@ class Model3DETR(nn.Module):
         poses = inputs["point_clouds"]
         nerf_ckpt_path = inputs['nerf_ckpt_path']
         scan_path = inputs['scan_path'][0]
-        # print('scan_path: ', scan_path)
-        # print('len(self.nerf_buffer): ', len(self.nerf_buffer))
         with torch.no_grad():
             if self.nerf_buffer_type == 'list':
                 if self.forward_idx % 10 == 0 or self.dataset_config.pseudo_batch_size == 1:
@@ -640,12 +586,9 @@ class Model3DETR(nn.Module):
                         self.render_kwargs_test, start = load_nerf_model(self.render_kwargs_test, ckpt_path=nerf_ckpt_path)
                         self.nerf_ckpt_path = nerf_ckpt_path
                     args_chunk = 1024 * 32
-                    # print('poses.shape: ', poses.shape)  # poses.shape:  torch.Size([8, 1, 3, 5])  # torch.Size([1, 8, 3, 5])
                     poses = poses.reshape(-1, 3, 5)
                     hwf = poses[0, :3, -1]
                     render_poses = poses[:, :3, :4]
-                    # render_poses = np.array(poses)
-                    # render_poses = torch.Tensor(render_poses).to(device)
                     H, W, focal = hwf.cpu().numpy()
                     H, W = int(H), int(W)
                     hwf = [H, W, focal]
@@ -658,8 +601,6 @@ class Model3DETR(nn.Module):
                                       render_factor=0)
                     if len(self.nerf_buffer) > self.buffer_his_length:
                          self.nerf_buffer = self.nerf_buffer[1:]
-                    # print('inputs[gt_box_corners].shape, inputs[gt_box_sem_cls_label].shape: ', inputs["gt_box_corners"].shape, inputs['gt_box_sem_cls_label'].shape)
-                    # inputs[gt_box_corners].shape, inputs[gt_box_sem_cls_label].shape:  torch.Size([1, 1, 8, 3]) torch.Size([1, 1])
                     self.nerf_buffer.append({self.forward_idx: {'raws': raws, 'nerf_ckpt_path': nerf_ckpt_path, 'scan_path': scan_path, "gt_box_corners": inputs["gt_box_corners"].cpu().numpy(),
                                                                 "gt_box_sem_cls_label": inputs['gt_box_sem_cls_label'].cpu().numpy().astype(np.int64),
                                                                 'gt_box_present': inputs['gt_box_present'].cpu().numpy(),
@@ -681,13 +622,10 @@ class Model3DETR(nn.Module):
                                                                          ckpt_path=nerf_ckpt_path)
                         self.nerf_ckpt_path = nerf_ckpt_path
                     args_chunk = 1024 * 32
-                    # print('poses.shape: ', poses.shape)  # poses.shape:  torch.Size([8, 1, 3, 5])  # torch.Size([1, 8, 3, 5])
                     poses = poses.reshape(-1, 3, 5)
 
                     hwf = poses[0, :3, -1]
                     render_poses = poses[:, :3, :4]
-                    # render_poses = np.array(poses)
-                    # render_poses = torch.Tensor(render_poses).to(device)
                     H, W, focal = hwf.cpu().numpy()
                     H, W = int(H), int(W)
                     hwf = [H, W, focal]
@@ -696,15 +634,12 @@ class Model3DETR(nn.Module):
                         [0, focal, 0.5 * H],
                         [0, 0, 1]
                     ])
-                    # print('render_poses[0]: ', render_poses[0])
                     rendering_time_per_batch_start = time.time()
                     rgbs, disps_vis, raws, disps = render_path(render_poses, hwf, K, args_chunk, self.render_kwargs_test,
                                                     savedir=None,
                                                     render_factor=0)
                     self.rendering_time_per_batch = time.time() - rendering_time_per_batch_start
                     self.total_rendering_time = self.total_rendering_time + self.rendering_time_per_batch
-                    # print('K: {}, hwf: {}'.format(K, hwf))
-                    # print('render_poses: ', render_poses)
                     if self.dataset_config.input_type in ['rendered_depth', 'nerf_rendered_depth', 'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
                         if np.isnan(disps).any():
                             disps = np.nan_to_num(disps, nan=1.)
@@ -719,8 +654,6 @@ class Model3DETR(nn.Module):
                                           'gt_box_corners': inputs['gt_box_corners'].cpu().numpy(), 'K': K, 'rendered_pose': poses.cpu().numpy()}
                         with open(os.path.join(tmp_dir, '{:06d}_{}_{}.pkl'.format(self.forward_idx, self.split, 'fine')), 'wb') as handle:
                             pickle.dump(pickle_content, handle)
-                    # print('raws.shape, disps.shape, rgbs.shape: ', raws.shape, disps.shape, rgbs.shape)
-                    # raws.shape, disps.shape, rgbs.shape:  (8, 240, 180, 64, 4) (8, 240, 180) (8, 240, 180, 3)
                     if self.dataset_config.input_type == 'rendered_rgb':
                         raws = rgbs
                     if self.dataset_config.input_type == 'rendered_depth':
@@ -741,35 +674,13 @@ class Model3DETR(nn.Module):
                             [0, focal / self.args.focal_length, 0.5 * H],
                             [0, 0, 1]
                         ])
-                        # coarse_K = np.array([
-                        #     [focal, 0, 0.5 * W * int(self.args.focal_length)],
-                        #     [0, focal, 0.5 * H * int(self.args.focal_length)],
-                        #     [0, 0, 1]
-                        # ])
                         coarse_hwf = copy.copy(hwf)
-                        # coarse_hwf[0] *= int(self.args.focal_length)
-                        # coarse_hwf[1] *= int(self.args.focal_length)
-                        # print('coarse_K: {}, coarse_hwf: {}'.format(coarse_K, coarse_hwf))
-                        # coarse_K[0, 0]: 183.589599609375, coarse_hwf: [480, 360, 183.5896]
                         coarse_rendering_time_per_batch_start = time.time()
                         coarse_rgbs, coarse_disps_vis, coarse_raws, coarse_disps = render_path(render_poses, coarse_hwf, coarse_K, args_chunk, self.render_kwargs_test,
                                                         savedir=None,
                                                         render_factor=0)
                         self.coarse_rendering_time_per_batch = time.time() - coarse_rendering_time_per_batch_start
                         self.coarse_total_rendering_time = self.coarse_total_rendering_time + self.coarse_rendering_time_per_batch
-                        # print('coarse_rendering_time_per_batch: {}, self.coarse_total_rendering_time: {}'.format(
-                        #     self.coarse_rendering_time_per_batch, self.coarse_total_rendering_time))
-                        # print('coarse_rgbs.shape: {}, coarse_disps_vis.shape: {}, coarse_raws.shape: {}, coarse_disps.shape: {}'
-                        #       .format(coarse_rgbs.shape, coarse_disps_vis.shape, coarse_raws.shape, coarse_disps.shape))
-                        # coarse_rgbs = coarse_rgbs[:, ::int(self.args.focal_length), ::int(self.args.focal_length), ]
-                        # coarse_disps_vis = coarse_disps_vis[:, ::int(self.args.focal_length), ::int(self.args.focal_length), ]
-                        # coarse_raws = coarse_raws[:, ::int(self.args.focal_length), ::int(self.args.focal_length), ]
-                        # coarse_disps = coarse_disps[:, ::int(self.args.focal_length), ::int(self.args.focal_length), ]
-                        # print(
-                        #     'coarse_rgbs.shape: {}, coarse_disps_vis.shape: {}, coarse_raws.shape: {}, coarse_disps.shape: {}'
-                        #     .format(coarse_rgbs.shape, coarse_disps_vis.shape, coarse_raws.shape, coarse_disps.shape))
-                        # coarse_rgbs.shape: (8, 480, 360, 3), coarse_disps_vis.shape: (8, 480, 360), coarse_raws.shape: (8, 480, 360, 64, 4), coarse_disps.shape: (8, 480, 360)
-                        # coarse_rgbs.shape: (8, 240, 180, 3), coarse_disps_vis.shape: (8, 240, 180), coarse_raws.shape: (8, 240, 180, 64, 4), coarse_disps.shape: (8, 240, 180)
                         if self.dataset_config.input_type in ['rendered_depth', 'nerf_rendered_depth',
                                                               'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
                             if np.isnan(coarse_disps).any():
@@ -799,11 +710,8 @@ class Model3DETR(nn.Module):
                         if self.dataset_config.input_type == 'rendered_rgb_rendered_depth':
                             coarse_raws = np.concatenate((np.repeat(coarse_rgbs[..., None], 4, axis=-1),
                                                      np.repeat(coarse_disps[..., None, None], 4, axis=-1)), axis=-2)
-                        # print('coarse_raws.shape: ', coarse_raws.shape)  # (8, 240, 180, 64, 4)
                     if len(self.nerf_buffer) >= self.buffer_his_length:
                         pop_obj = self.nerf_buffer.popitem()
-                    # print('inputs[gt_box_corners].shape, inputs[gt_box_sem_cls_label].shape: ', inputs["gt_box_corners"].shape, inputs['gt_box_sem_cls_label'].shape)
-                    # inputs[gt_box_corners].shape, inputs[gt_box_sem_cls_label].shape:  torch.Size([1, 1, 8, 3]) torch.Size([1, 1])
                     self.nerf_buffer[scan_path] = {'raws': raws, 'forward_idx': self.forward_idx,
                                                             "gt_box_corners": inputs["gt_box_corners"].cpu().numpy(),
                                                             "gt_box_sem_cls_label": inputs['gt_box_sem_cls_label'].cpu().numpy().astype(
@@ -812,9 +720,9 @@ class Model3DETR(nn.Module):
                                                             'gt_box_angles': inputs['gt_box_angles'].cpu().numpy(),
                                                             }
                     if self.args.arch_type in ['coarse_fine', 'coarse', 'coarse2fine']:
-                        coarse_raws_buffer = coarse_raws  # [:, :int(coarse_raws.shape[1] / 2), :int(coarse_raws.shape[2] / 2), ]
-                        self.nerf_buffer[scan_path]['coarse_raws'] = copy.deepcopy(coarse_raws_buffer)  # [:, :int(coarse_raws.shape[1] / 2), :int(coarse_raws.shape[2] / 2), ]
-                    if self.test_only: # or True:
+                        coarse_raws_buffer = coarse_raws
+                        self.nerf_buffer[scan_path]['coarse_raws'] = copy.deepcopy(coarse_raws_buffer)
+                    if self.test_only:
                         self.nerf_buffer[scan_path]['nerf_rgbs'] = copy.deepcopy(rgbs)
                         return_gt = {'nerf_rgbs': copy.deepcopy(rgbs)}
                         if self.dataset_config.input_type in ['rendered_depth', 'nerf_rendered_depth', 'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
@@ -823,7 +731,7 @@ class Model3DETR(nn.Module):
                             self.nerf_buffer[scan_path]['nerf_depth_vis'] = copy.deepcopy(disps_vis)
                             return_gt['nerf_depth_vis'] = copy.deepcopy(disps_vis)
                         if self.args.arch_type in ['coarse_fine', 'coarse', 'coarse2fine']:
-                            self.nerf_buffer[scan_path]['coarse_nerf_rgbs'] = copy.deepcopy(coarse_rgbs)  # [:, :int(coarse_rgbs.shape[1] / 2), :int(coarse_rgbs.shape[2] / 2), ]
+                            self.nerf_buffer[scan_path]['coarse_nerf_rgbs'] = copy.deepcopy(coarse_rgbs)
                             return_gt['coarse_nerf_rgbs'] = copy.deepcopy(coarse_rgbs)
                             if self.dataset_config.input_type in ['rendered_depth', 'nerf_rendered_depth',
                                                                   'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
@@ -833,7 +741,6 @@ class Model3DETR(nn.Module):
                                 return_gt['coarse_nerf_depth_vis'] = copy.deepcopy(coarse_disps_vis)
                     else:
                         return_gt = {}
-                    # print('batch_data_label[nerf_rgbs].shape: ', rgbs.shape) # batch_data_label[nerf_rgbs].shape:  (8, 240, 180, 3)
                 else:
                     nerf_data = self.nerf_buffer[scan_path]
                     return_gt = {"gt_box_corners": torch.Tensor(nerf_data["gt_box_corners"]).to(net_device),
@@ -847,7 +754,6 @@ class Model3DETR(nn.Module):
                         coarse_raws = nerf_data['coarse_raws']
                     else:
                         coarse_raws = None
-                    # print('batch_data_label[nerf_rgbs].shape: ', nerf_data['nerf_rgbs'].shape)
                     if self.test_only: # or True:
                         return_gt['nerf_rgbs'] = copy.deepcopy(nerf_data['nerf_rgbs'])
                         if self.dataset_config.input_type in ['rendered_depth', 'nerf_rendered_depth', 'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
@@ -859,10 +765,8 @@ class Model3DETR(nn.Module):
                                                                   'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
                                 return_gt['coarse_nerf_depth'] = copy.deepcopy(nerf_data['coarse_nerf_depth'])
                                 return_gt['coarse_nerf_depth_vis'] = copy.deepcopy(nerf_data['coarse_nerf_depth_vis'])
-        # print('raws.shape: ', raws.shape)  # raws.shape:  (8, 240, 180, 64, 4)
-        # device = 'cuda:0'
         print('rendering_time_per_batch: {}, self.total_rendering_time: {}'.format(self.rendering_time_per_batch, self.total_rendering_time))
-        point_clouds = torch.Tensor(raws).to(net_device)  # inputs["point_clouds"]
+        point_clouds = torch.Tensor(raws).to(net_device)
         if self.args.arch_type in ['coarse2fine', 'coarse']:
             if self.dataset_config.model_type == 'resnet18':
                 coarse_raws = torch.Tensor(coarse_raws).to(net_device)
@@ -871,13 +775,11 @@ class Model3DETR(nn.Module):
                 coarse_raws = coarse_raws.permute(0, 3, 1, 2)
                 coarse_resnet_feat = self.coarse_resnet(coarse_raws)
 
-                # print(resnet_output.shape)
-                # box_corners = box_corners.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
                 coarse_bbox_corner = self.coarse_corner_head(coarse_resnet_feat)
-                coarse_box_corners = coarse_bbox_corner.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
+                coarse_box_corners = coarse_bbox_corner.reshape(-1, 8, 3).unsqueeze(1)
                 coarse_sem_cls_logits = self.semcls_head(coarse_resnet_feat).unsqueeze(1)
                 coarse_outputs = {
-                        "sem_cls_logits": coarse_sem_cls_logits,  # torch.ones((box_corners.shape[0], 1)).to(box_corners.device),
+                        "sem_cls_logits": coarse_sem_cls_logits,
                         "objectness_prob": torch.ones((coarse_box_corners.shape[0], 1)).to(coarse_box_corners.device),
                         "sem_cls_prob": torch.ones((coarse_box_corners.shape[0], 1, 1)).to(coarse_box_corners.device),
                         "box_corners": coarse_box_corners,
@@ -888,20 +790,14 @@ class Model3DETR(nn.Module):
             elif self.dataset_config.model_type == 'mlp':
                 coarse_raws = torch.Tensor(coarse_raws).to(net_device)
                 coarse_enc_xyz, coarse_enc_features, coarse_enc_inds = self.run_coarse_encoder(coarse_raws)
-                # enc_features: [128, 8, 256]
                 coarse_enc_features = coarse_enc_features.permute(1, 2, 0)
-                # print('enc_features.shape: ', enc_features.shape)
                 coarse_feat = self.coarse_encoder_to_decoder_projection(coarse_enc_features)
-                # print('feat.shape: ', feat.shape)
                 coarse_pool = self.coarse_avgpool(coarse_feat).squeeze(-1)
-                # print('pool.shape: ', pool.shape)
                 coarse_bbox = self.corner_head(coarse_pool)
-                # print('bbox.shape: ', bbox.shape)
-                coarse_box_corners = coarse_bbox.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
+                coarse_box_corners = coarse_bbox.reshape(-1, 8, 3).unsqueeze(1)
                 coarse_sem_cls_logits = self.semcls_head(coarse_pool).unsqueeze(1)
-                # print('resnet_output.shape: ', resnet_output.shape)
                 coarse_outputs = {
-                    "sem_cls_logits": coarse_sem_cls_logits,  #  torch.ones((resnet_output.shape[0], 1, 2)).to(resnet_output.device),
+                    "sem_cls_logits": coarse_sem_cls_logits,
                     "objectness_prob": torch.ones((coarse_box_corners.shape[0], 1)).to(coarse_box_corners.device),
                     "sem_cls_prob": torch.ones((coarse_box_corners.shape[0], 1, 1)).to(coarse_box_corners.device),
                     "box_corners": coarse_box_corners,
@@ -927,9 +823,6 @@ class Model3DETR(nn.Module):
                 coarse_box_features = self.coarse_decoder(
                     coarse_tgt, coarse_enc_features, query_pos=None, pos=None
                 )[0]
-                # coarse_box_features = self.coarse_decoder(
-                #     coarse_tgt, coarse_enc_features, query_pos=coarse_query_embed, pos=coarse_enc_pos
-                # )[0]
                 coarse_box_predictions = self.coarse_get_box_predictions(
                     coarse_query_xyz, point_cloud_dims, coarse_box_features
                 )
@@ -943,27 +836,13 @@ class Model3DETR(nn.Module):
                 coarse_resnet_feat = self.coarse_resnet(coarse_raws)
             elif self.dataset_config.model_type == 'mlp':
                 coarse_enc_xyz, coarse_enc_features, coarse_enc_inds = self.run_coarse_encoder(point_clouds)
-                # enc_features: [128, 8, 256]
                 coarse_enc_features = coarse_enc_features.permute(1, 2, 0)
-                # print('enc_features.shape: ', enc_features.shape)
                 coarse_feat = self.coarse_encoder_to_decoder_projection(coarse_enc_features)
                 coarse_pool = self.avgpool(coarse_feat).squeeze(-1)
-                # # print('pool.shape: ', pool.shape)
             else:
-                coarse_raws = torch.Tensor(coarse_raws).to(net_device)  # inputs["point_clouds"]
+                coarse_raws = torch.Tensor(coarse_raws).to(net_device)
                 # Fine Stream
                 coarse_enc_xyz, coarse_enc_features, coarse_enc_inds = self.run_coarse_encoder(coarse_raws)
-                # point_cloud_dims = [
-                #     inputs["point_cloud_dims_min"],
-                #     inputs["point_cloud_dims_max"],
-                # ]
-                # coarse_query_xyz, coarse_query_embed = self.coarse_get_query_embeddings(coarse_enc_xyz, point_cloud_dims)
-                # query_embed: batch x channel x npoint
-                # coarse_enc_pos = self.coarse_pos_embedding(coarse_enc_xyz, input_range=point_cloud_dims)
-                # decoder expects: npoints x batch x channel
-                # coarse_enc_pos = coarse_enc_pos.permute(2, 0, 1)
-                # coarse_query_embed = coarse_query_embed.permute(2, 0, 1)
-                # coarse_tgt = torch.zeros_like(coarse_query_embed)
         if not self.args.arch_type in ['coarse']:
             if self.dataset_config.model_type == 'resnet18':
                 if self.dataset_config.input_type == 'nerf':
@@ -986,18 +865,13 @@ class Model3DETR(nn.Module):
                         resnet_feat = tgt + tgt2
                     elif self.args.fusion_type in ['mlp']:
                         fuse_features = torch.cat((coarse_resnet_feat[..., None], resnet_feat[..., None]), -1)
-                        # print('coarse_enc_features.shape: {}, enc_features.shape: {}, fuse_features.shape: {}'
-                        #       .format(coarse_enc_features.shape, enc_features.shape, fuse_features.shape))
-                        # coarse_enc_features.shape: torch.Size([64, 8, 256]), enc_features.shape: torch.Size([64, 8, 256]), fuse_features.shape: torch.Size([64, 8, 256, 2])
                         resnet_feat = self.fuse_layer(fuse_features).squeeze(-1)
 
-                # print(resnet_output.shape)
-                # box_corners = box_corners.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
                 bbox_corner = self.corner_head(resnet_feat)
                 box_corners = bbox_corner.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
                 sem_cls_logits = self.semcls_head(resnet_feat).unsqueeze(1)
                 outputs = {
-                        "sem_cls_logits": sem_cls_logits,  # torch.ones((box_corners.shape[0], 1)).to(box_corners.device),
+                        "sem_cls_logits": sem_cls_logits,
                         "objectness_prob": torch.ones((box_corners.shape[0], 1)).to(box_corners.device),
                         "sem_cls_prob": torch.ones((box_corners.shape[0], 1, 1)).to(box_corners.device),
                         "box_corners": box_corners,
@@ -1007,11 +881,8 @@ class Model3DETR(nn.Module):
                 }
             elif self.dataset_config.model_type == 'mlp':
                 enc_xyz, enc_features, enc_inds = self.run_encoder(point_clouds)
-                # enc_features: [128, 8, 256]
                 enc_features = enc_features.permute(1, 2, 0)
-                # print('enc_features.shape: ', enc_features.shape)
                 feat = self.encoder_to_decoder_projection(enc_features)
-                # print('feat.shape: ', feat.shape)
                 pool = self.avgpool(feat).squeeze(-1)
                 if self.args.arch_type in ['coarse_fine']:
                     # coarse_enc_features = coarse_enc_features
@@ -1029,18 +900,12 @@ class Model3DETR(nn.Module):
                         pool = tgt + tgt2
                     elif self.args.fusion_type in ['mlp']:
                         fuse_features = torch.cat((coarse_pool[..., None], pool[..., None]), -1)
-                        # print('coarse_enc_features.shape: {}, enc_features.shape: {}, fuse_features.shape: {}'
-                        #       .format(coarse_enc_features.shape, enc_features.shape, fuse_features.shape))
-                        # coarse_enc_features.shape: torch.Size([64, 8, 256]), enc_features.shape: torch.Size([64, 8, 256]), fuse_features.shape: torch.Size([64, 8, 256, 2])
                         pool = self.fuse_layer(fuse_features).squeeze(-1)
-                # print('pool.shape: ', pool.shape)
                 bbox = self.corner_head(pool)
-                # print('bbox.shape: ', bbox.shape)
                 box_corners = bbox.reshape(-1, 8, 3).unsqueeze(1)  # (B, 1, 8, 3)
                 sem_cls_logits = self.semcls_head(pool).unsqueeze(1)
-                # print('resnet_output.shape: ', resnet_output.shape)
                 outputs = {
-                    "sem_cls_logits": sem_cls_logits,  #  torch.ones((resnet_output.shape[0], 1, 2)).to(resnet_output.device),
+                    "sem_cls_logits": sem_cls_logits,
                     "objectness_prob": torch.ones((box_corners.shape[0], 1)).to(box_corners.device),
                     "sem_cls_prob": torch.ones((box_corners.shape[0], 1, 1)).to(box_corners.device),
                     "box_corners": box_corners,
@@ -1055,15 +920,9 @@ class Model3DETR(nn.Module):
                     inputs["point_cloud_dims_max"],
                 ]
                 query_xyz, query_embed = self.get_query_embeddings(enc_xyz, point_cloud_dims)
-                # query_embed: batch x channel x npoint
-                # enc_pos = self.pos_embedding(enc_xyz, input_range=point_cloud_dims)
-                # decoder expects: npoints x batch x channel
-                # enc_pos = enc_pos.permute(2, 0, 1)
                 query_embed = query_embed.permute(2, 0, 1)
                 tgt = torch.zeros_like(query_embed)
                 if self.args.arch_type in ['coarse_fine']:
-                    # coarse_enc_features = coarse_enc_features
-                    # enc_features = enc_features
                     if self.args.fusion_type in ['self_attn']:
                         # Self Attn
                         tgt = enc_features
@@ -1078,19 +937,11 @@ class Model3DETR(nn.Module):
                         enc_features = tgt + tgt2
                     elif self.args.fusion_type in ['mlp']:
                         fuse_features = torch.cat((coarse_enc_features[..., None], enc_features[..., None]), -1)
-                        # print('coarse_enc_features.shape: {}, enc_features.shape: {}, fuse_features.shape: {}'
-                        #       .format(coarse_enc_features.shape, enc_features.shape, fuse_features.shape))
-                        # coarse_enc_features.shape: torch.Size([64, 8, 256]), enc_features.shape: torch.Size([64, 8, 256]), fuse_features.shape: torch.Size([64, 8, 256, 2])
                         enc_features = self.fuse_layer(fuse_features).squeeze(-1)
-                        # print('2 enc_features: {}'.format(enc_features.shape))
-                        # 2 enc_features: torch.Size([64, 8, 256, 1])
 
                 box_features = self.decoder(
                     tgt, enc_features, query_pos=None, pos=None
                 )[0]
-                # box_features = self.decoder(
-                #     tgt, enc_features, query_pos=query_embed, pos=enc_pos
-                # )[0]
                 box_predictions = self.get_box_predictions(
                     query_xyz, point_cloud_dims, box_features
                 )
@@ -1138,15 +989,11 @@ class PreEncoder(nn.Module):
         self.input_type = args.input_type  # rgb or nerf
         self.args = args
 
-        # (240, 180, 128, 4)
-        # print(self.mlp_module)
         if args.preencoder_type == 'resnet18':
             self.resnet = models.resnet18()
             num_ftrs = self.resnet.fc.in_features
             self.resnet.fc = nn.Linear(num_ftrs, args.dec_dim)
             if self.input_type in ['nerf']:
-                # print(self.resnet)
-                # num_ftrs = self.resnet.conv1.in_features
                 self.resnet.conv1 = nn.Conv2d(128 * 2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3),
                                               bias=False)
             self.xyz_layer = nn.Linear(256, 4)
@@ -1185,25 +1032,6 @@ class PreEncoder(nn.Module):
             (B, npoint) tensor of the inds
         """
 
-        # xyz_flipped = xyz.transpose(1, 2).contiguous()
-        # if inds is None:
-        #     inds = pointnet2_utils.furthest_point_sample(xyz, self.npoint)
-        # else:
-        #     assert(inds.shape[1] == self.npoint)
-        # new_xyz = pointnet2_utils.gather_operation(
-        #     xyz_flipped, inds
-        # ).transpose(1, 2).contiguous() if self.npoint is not None else None
-
-        # if not self.ret_unique_cnt:
-        #     grouped_features, grouped_xyz = self.grouper(
-        #         xyz, new_xyz, features
-        #     )  # (B, C, npoint, nsample)
-        # else:
-        #     grouped_features, grouped_xyz, unique_cnt = self.grouper(
-        #         xyz, new_xyz, features
-        #     )  # (B, C, npoint, nsample), (B,3,npoint,nsample), (B,npoint)
-        # print('1 features.shape: ', features.shape)  # [8, 128, 4]
-        # new_xyz = self.mlp_module(features)  # (B, mlp[-1], npoint, nsample)
         if self.args.preencoder_type == 'resnet18':
             if self.input_type in ['nerf']:
                 features = features.reshape(features.shape[0], features.shape[1], features.shape[2],
@@ -1221,17 +1049,12 @@ class PreEncoder(nn.Module):
                 features = features.permute(0, 3, 1, 2)
             for i, m in enumerate(self.mlp_module):
                 features = m(features)
-                # print(i, features.shape)
             if self.input_type in ['nerf', 'nerf_rendered_rgb', 'nerf_rendered_depth', 'nerf_rendered_rgb_rendered_depth', 'rendered_rgb_rendered_depth']:
                 features = features.reshape(features.shape[0], features.shape[1], features.shape[4]).permute(0, 2, 1)
             elif self.input_type in ['rgb', 'rendered_rgb', 'depth', 'rendered_depth']:
-                # print(features.shape)  # torch.Size([8, 256, 25, 19])
                 features = features.reshape(features.shape[0], features.shape[1], -1).permute(0, 2, 1)
-                # print(features.shape)  #  torch.Size([8, 475, 256])
-            # torch.Size([8, 128, 256])
-            new_xyz = self.xyz_layer(features)  # torch.Size([8, 128, 4])
-            # print('new_xyz.shape: {}, features.shape: {}'.format(new_xyz.shape, features.shape))
-            # new_xyz.shape: torch.Size([8, 64, 4]), features.shape: torch.Size([8, 64, 256])
+
+            new_xyz = self.xyz_layer(features)
         return new_xyz, features, inds
 
 def build_nerf(args):
@@ -1249,13 +1072,6 @@ def build_preencoder(args):
         mlp_dims = [3, 4, args.enc_dim]
     elif args.input_type in ['depth', 'rendered_depth']:
         mlp_dims = [1, 4, args.enc_dim]
-    # elif args.input_type in ['nerf_rendered_rgb']:
-    #     mlp_dims = [4+3, 4, 4, 4, args.enc_dim]
-    # elif args.input_type in ['nerf_rendered_depth']:
-    #     mlp_dims = [4+1, 4, 4, 4, args.enc_dim]
-    # elif args.input_type in ['nerf_rendered_rgb_rendered_depth']:
-    #     mlp_dims = [4+3+1, 4, 4, 4, args.enc_dim]
-    # mlp_dims = [4, 4]
     preencoder = PreEncoder(
         radius=0.2,
         nsample=64,
@@ -1264,7 +1080,6 @@ def build_preencoder(args):
         normalize_xyz=True,
         args=args,
     )
-    # preencoder = nn.ModuleList([nn.Linear(4, args.enc_dim) for i in range(1)])
     return preencoder
 
 
@@ -1282,29 +1097,6 @@ def build_encoder(args):
             encoder_layer=encoder_layer, num_layers=args.enc_nlayers
         )
 
-    # elif args.enc_type in ["masked"]:
-    #     encoder_layer = TransformerEncoderLayer(
-    #         d_model=args.enc_dim,
-    #         nhead=args.enc_nhead,
-    #         dim_feedforward=args.enc_ffn_dim,
-    #         dropout=args.enc_dropout,
-    #         activation=args.enc_activation,
-    #     )
-    #     interim_downsampling = PointnetSAModuleVotes(
-    #         radius=0.4,
-    #         nsample=32,
-    #         npoint=args.preenc_npoints // 2,
-    #         mlp=[args.enc_dim, 256, 256, args.enc_dim],
-    #         normalize_xyz=True,
-    #     )
-    #
-    #     masking_radius = [math.pow(x, 2) for x in [0.4, 0.8, 1.2]]
-    #     encoder = MaskedTransformerEncoder(
-    #         encoder_layer=encoder_layer,
-    #         num_layers=3,
-    #         interim_downsampling=interim_downsampling,
-    #         masking_radius=masking_radius,
-    #     )
     else:
         raise ValueError(f"Unknown encoder type {args.enc_type}")
     return encoder
@@ -1342,6 +1134,5 @@ def build_3detr(args, dataset_config):
         test_only=args.test_only,
         args=args
     )
-    # print('args.nqueries: ', args.nqueries)
     output_processor = BoxProcessor(dataset_config)
     return model, output_processor

@@ -30,9 +30,6 @@ class Matcher(nn.Module):
         nqueries = outputs["sem_cls_prob"].shape[1]
         ngt = targets["gt_box_sem_cls_label"].shape[1]
         nactual_gt = targets["nactual_gt"]
-        # print('outputs["sem_cls_prob"].shape: ', outputs["sem_cls_prob"].shape)
-        # print('batchsize: {}, nqueries: {}, ngt: {}, nactual_gt: {}'.format(batchsize, nqueries, ngt, nactual_gt))
-        # batchsize: 8, nqueries: 1, ngt: 1, nactual_gt: tensor([1, 1, 1, 1, 1, 1, 1, 1], device='cuda:0')
         # classification cost: batch x nqueries x ngt matrix
         pred_cls_prob = outputs["sem_cls_prob"]
         gt_box_sem_cls_labels = (
@@ -64,9 +61,6 @@ class Matcher(nn.Module):
 
         # auxiliary variables useful for batched loss computation
         batch_size, nprop = final_cost.shape[0], final_cost.shape[1]
-        # print('nprop: {}, final_cost.shape: {}, giou_mat.shape: {}, objectness_mat.shape: {}, class_mat.shape: {}'
-        #       .format(nprop, final_cost.shape, giou_mat.shape, objectness_mat.shape, class_mat.shape))
-        # nprop: 1, final_cost.shape: (8, 1, 1), giou_mat.shape: torch.Size([8, 1, 1]), objectness_mat.shape: torch.Size([8, 1, 1]), class_mat.shape: torch.Size([8, 1, 1])
         per_prop_gt_inds = torch.zeros(
             [batch_size, nprop], dtype=torch.int64, device=pred_cls_prob.device
         )
@@ -84,7 +78,6 @@ class Matcher(nn.Module):
                 per_prop_gt_inds[b, assign[0]] = assign[1]
                 proposal_matched_mask[b, assign[0]] = 1
             assignments.append(assign)
-        # print('per_prop_gt_inds: ', per_prop_gt_inds)  #  tensor([[0], [0], [0], [0], [0], [0], [0], [0]]
         return {
             "assignments": assignments,
             "per_prop_gt_inds": per_prop_gt_inds,
@@ -110,26 +103,14 @@ class SetCriterion(nn.Module):
                 "loss_center": self.loss_center,
                 "loss_size": self.loss_size,
                 "loss_giou": self.loss_giou,
-                # this isn't used during training and is logged for debugging.
-                # thus, this loss does not have a loss_weight associated with it.
                 "loss_cardinality": self.loss_cardinality,
             }
-        elif dataset_config.version == 'v2_corner':  # and dataset_config.model_type != 'resnet18':
+        elif dataset_config.version == 'v2_corner':
             self.loss_functions = {
-                "loss_sem_cls": self.loss_sem_cls,  ## uncomment
-                # "loss_angle": self.loss_angle,
-                # "loss_center": self.loss_center,
-                # "loss_size": self.loss_size,
-                # "loss_giou": self.loss_giou,
+                "loss_sem_cls": self.loss_sem_cls,
                 "loss_coord": self.loss_coord,
-                # this isn't used during training and is logged for debugging.
-                # thus, this loss does not have a loss_weight associated with it.
                 "loss_cardinality": self.loss_cardinality,
             }
-        # elif dataset_config.version == 'v2_corner' and dataset_config.model_type in ['resnet18', 'mlp']:
-        #     self.loss_functions = {
-        #         "loss_coord": self.loss_coord,
-        #     }
 
     @torch.no_grad()
     def loss_cardinality(self, outputs, targets, assignments):
@@ -143,37 +124,13 @@ class SetCriterion(nn.Module):
         return {"loss_cardinality": card_err}
 
     def loss_sem_cls(self, outputs, targets, assignments):
-
-        # # Not vectorized version
-        # pred_logits = outputs["sem_cls_logits"]
-        # assign = assignments["assignments"]
-
-        # sem_cls_targets = torch.ones((pred_logits.shape[0], pred_logits.shape[1]),
-        #                         dtype=torch.int64, device=pred_logits.device)
-
-        # # initialize to background/no-object class
-        # sem_cls_targets *= (pred_logits.shape[-1] - 1)
-
-        # # use assignments to compute labels for matched boxes
-        # for b in range(pred_logits.shape[0]):
-        #     if len(assign[b]) > 0:
-        #         sem_cls_targets[b, assign[b][0]] = targets["gt_box_sem_cls_label"][b, assign[b][1]]
-
-        # sem_cls_targets = sem_cls_targets.view(-1)
-        # pred_logits = pred_logits.reshape(sem_cls_targets.shape[0], -1)
-        # loss = F.cross_entropy(pred_logits, sem_cls_targets, self.semcls_percls_weights, reduction="mean")
         pred_logits = outputs["sem_cls_logits"]
         gt_box_label = torch.gather(
             targets["gt_box_sem_cls_label"], 1, assignments["per_prop_gt_inds"]
         )
-        # print('pred_logits.shape: {}, gt_box_label.shape: {}'.format(pred_logits.shape, gt_box_label.shape))
-        # pred_logits.shape: torch.Size([8, 64, 2]), gt_box_label.shape: torch.Size([8, 64])
-        # MLP: pred_logits.shape: torch.Size([8, 1, 2]), gt_box_label.shape: torch.Size([8, 1])
-        # print('pred_logits: {}, gt_box_label: {}'.format(pred_logits, gt_box_label))
         gt_box_label[assignments["proposal_matched_mask"].int() == 0] = (
             pred_logits.shape[-1] - 1
         )
-        # print('assignments["proposal_matched_mask"].int(): {}, gt_box_label: {}'.format(assignments["proposal_matched_mask"].int(), gt_box_label))
         loss = F.cross_entropy(
             pred_logits.transpose(2, 1),
             gt_box_label,
@@ -193,28 +150,6 @@ class SetCriterion(nn.Module):
             gt_angle_residual_normalized = gt_angle_residual / (
                 np.pi / self.dataset_config.num_angle_bin
             )
-
-            # # Non vectorized version
-            # assignments = assignments["assignments"]
-            # p_angle_logits = []
-            # p_angle_resid = []
-            # t_angle_labels = []
-            # t_angle_resid = []
-
-            # for b in range(angle_logits.shape[0]):
-            #     if len(assignments[b]) > 0:
-            #         p_angle_logits.append(angle_logits[b, assignments[b][0]])
-            #         p_angle_resid.append(angle_residual[b, assignments[b][0], gt_angle_label[b][assignments[b][1]]])
-            #         t_angle_labels.append(gt_angle_label[b, assignments[b][1]])
-            #         t_angle_resid.append(gt_angle_residual_normalized[b, assignments[b][1]])
-
-            # p_angle_logits = torch.cat(p_angle_logits)
-            # p_angle_resid = torch.cat(p_angle_resid)
-            # t_angle_labels = torch.cat(t_angle_labels)
-            # t_angle_resid = torch.cat(t_angle_resid)
-
-            # angle_cls_loss = F.cross_entropy(p_angle_logits, t_angle_labels, reduction="sum")
-            # angle_reg_loss = huber_loss(p_angle_resid.flatten() - t_angle_resid.flatten()).sum()
 
             gt_angle_label = torch.gather(
                 gt_angle_label, 1, assignments["per_prop_gt_inds"]
@@ -254,14 +189,6 @@ class SetCriterion(nn.Module):
     def loss_center(self, outputs, targets, assignments):
         center_dist = outputs["center_dist"]
         if targets["num_boxes_replica"] > 0:
-
-            # # Non vectorized version
-            # assign = assignments["assignments"]
-            # center_loss = torch.zeros(1, device=center_dist.device).squeeze()
-            # for b in range(center_dist.shape[0]):
-            #     if len(assign[b]) > 0:
-            #         center_loss += center_dist[b, assign[b][0], assign[b][1]].sum()
-
             # select appropriate distances by using proposal to gt matching
             center_loss = torch.gather(
                 center_dist, 2, assignments["per_prop_gt_inds"].unsqueeze(-1)
@@ -279,15 +206,6 @@ class SetCriterion(nn.Module):
 
     def loss_giou(self, outputs, targets, assignments):
         gious_dist = 1 - outputs["gious"]
-
-        # # Non vectorized version
-        # giou_loss = torch.zeros(1, device=gious_dist.device).squeeze()
-        # assign = assignments["assignments"]
-
-        # for b in range(gious_dist.shape[0]):
-        #     if len(assign[b]) > 0:
-        #         giou_loss += gious_dist[b, assign[b][0], assign[b][1]].sum()
-
         # select appropriate gious by using proposal to gt matching
         giou_loss = torch.gather(
             gious_dist, 2, assignments["per_prop_gt_inds"].unsqueeze(-1)
@@ -306,19 +224,6 @@ class SetCriterion(nn.Module):
         pred_box_sizes = outputs["size_normalized"]
 
         if targets["num_boxes_replica"] > 0:
-
-            # # Non vectorized version
-            # p_sizes = []
-            # t_sizes = []
-            # assign = assignments["assignments"]
-            # for b in range(pred_box_sizes.shape[0]):
-            #     if len(assign[b]) > 0:
-            #         p_sizes.append(pred_box_sizes[b, assign[b][0]])
-            #         t_sizes.append(gt_box_sizes[b, assign[b][1]])
-            # p_sizes = torch.cat(p_sizes)
-            # t_sizes = torch.cat(t_sizes)
-            # size_loss = F.l1_loss(p_sizes, t_sizes, reduction="sum")
-
             # construct gt_box_sizes as [batch x nprop x 3] matrix by using proposal to gt matching
             gt_box_sizes = torch.stack(
                 [
@@ -347,13 +252,9 @@ class SetCriterion(nn.Module):
         pred_box_coord = outputs["box_corners"]
 
         if targets["num_boxes_replica"] > 0:
-            # print('pred_box_coord.shape, gt_box_coord.shape: ', pred_box_coord.shape, gt_box_coord.shape)
-            # gt: (B, 128, 8, 3), gt: (B, 1, 8, 3)
             coord_loss = F.l1_loss(pred_box_coord, gt_box_coord, reduction="none").sum(
                 dim=(-1, -2)
-            )  # shape (2, 128)
-            # print('pred_box_coord: {}, gt_box_coord: {}'.format(pred_box_coord, gt_box_coord))
-            # print(coord_loss.shape, assignments["proposal_matched_mask"])
+            )
             # zero-out non-matched proposals
             coord_loss *= assignments["proposal_matched_mask"]
             coord_loss = coord_loss.sum()
@@ -364,9 +265,6 @@ class SetCriterion(nn.Module):
         return {"loss_coord": coord_loss}
 
     def single_output_forward(self, outputs, targets):
-        # print('outputs[box_corners].shape, targets[gt_box_corners].shape, targets["nactual_gt"].shape, targets["gt_box_angles"].shape: ', outputs["box_corners"].shape,
-        #     targets["gt_box_corners"].shape, targets["nactual_gt"].shape, targets["gt_box_angles"].shape)
-        # torch.Size([8, 128, 8, 3]) torch.Size([8, 1, 8, 3]), 8, (8, 1)
         gious = generalized_box3d_iou(
             outputs["box_corners"],
             targets["gt_box_corners"],
@@ -418,21 +316,8 @@ class SetCriterion(nn.Module):
                 targets[
                     "num_boxes_replica"
                 ] = nactual_gt.sum().item()  # number of boxes on this worker for dist training
-                # print('outputs[outputs].shape: {}, targets.shape: {}'.format(outputs["outputs"].shape, targets.shape))
                 sub_loss, sub_loss_dict = self.single_output_forward(each_output["outputs"], targets)
                 loss += sub_loss
-                # if "aux_outputs" in each_output:
-                #     for k in range(len(each_output["aux_outputs"])):
-                #         interm_loss, interm_loss_dict = self.single_output_forward(
-                #             each_output["aux_outputs"][k], targets
-                #         )
-                #
-                #         # sub_loss += interm_loss
-                #         loss += interm_loss
-                #         for interm_key in interm_loss_dict:
-                #             sub_loss_dict[f"{interm_key}_{k}"] = interm_loss_dict[interm_key]
-                # for key, value in sub_loss_dict.items():
-                #     loss_dict['{}_{}'.format(key, i)] = value
         else:
             nactual_gt = targets["gt_box_present"].sum(axis=1).long()
             num_boxes = torch.clamp(all_reduce_average(nactual_gt.sum()), min=1).item()
@@ -441,18 +326,8 @@ class SetCriterion(nn.Module):
             targets[
                 "num_boxes_replica"
             ] = nactual_gt.sum().item()  # number of boxes on this worker for dist training
-            # print('outputs[outputs].shape: {}, targets.shape: {}'.format(outputs["outputs"].shape, targets.shape))
             loss, loss_dict = self.single_output_forward(outputs["outputs"], targets)
 
-            # if "aux_outputs" in outputs:
-            #     for k in range(len(outputs["aux_outputs"])):
-            #         interm_loss, interm_loss_dict = self.single_output_forward(
-            #             outputs["aux_outputs"][k], targets
-            #         )
-            #
-            #         loss += interm_loss
-            #         for interm_key in interm_loss_dict:
-            #             loss_dict[f"{interm_key}_{k}"] = interm_loss_dict[interm_key]
         return loss, loss_dict
 
 
@@ -463,13 +338,6 @@ def build_criterion(args, dataset_config):
         cost_center=args.matcher_center_cost,
         cost_objectness=args.matcher_objectness_cost,
     )
-    # if args.model_type in ['resnet18', 'mlp']:
-    #     loss_weight_dict = {
-    #         "loss_giou_weight": args.loss_giou_weight,
-    #         "loss_no_object_weight": args.loss_no_object_weight,
-    #         "loss_coord_weight": args.loss_coord_weight,
-    #     }
-    # else:
     if args.version == 'v1_csa':
         loss_weight_dict = {
             "loss_giou_weight": args.loss_giou_weight,
@@ -486,10 +354,6 @@ def build_criterion(args, dataset_config):
             "loss_sem_cls_weight": args.loss_sem_cls_weight,
             "loss_no_object_weight": args.loss_no_object_weight,
             "loss_coord_weight": args.loss_coord_weight,
-            # "loss_angle_cls_weight": args.loss_angle_cls_weight,
-            # "loss_angle_reg_weight": args.loss_angle_reg_weight,
-            # "loss_center_weight": args.loss_center_weight,
-            # "loss_size_weight": args.loss_size_weight,
         }
         print('loss_weight_dict: ', loss_weight_dict)
     criterion = SetCriterion(matcher, dataset_config, loss_weight_dict)
